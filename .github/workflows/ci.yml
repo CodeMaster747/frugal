@@ -62,7 +62,14 @@ jobs:
           cache: pip
 
       - name: Install
-        run: pip install -e ".[auth,dev]"
+        # `classify` is here for scikit-learn, which tests/integration/
+        # test_categorization.py genuinely exercises -- without it those tests
+        # fail on ModuleNotFoundError rather than being skipped, and the
+        # classifier would otherwise be the one engine CI never runs. It also
+        # brings numpy, which is why the OCR modules' imports resolve here.
+        # `ocr` stays out: OCR_ENGINE defaults to `fake`, so nothing in the
+        # suite imports cv2, and OpenCV is a large install to carry for nothing.
+        run: pip install -e ".[auth,classify,dev]"
 
       - name: Lint
         run: ruff check app tests
@@ -136,15 +143,29 @@ jobs:
 
       # The smoke spec asserts the frontend actually reaches the backend, so
       # the real stack runs -- a mocked API would not prove the path.
+      # Migrations run BEFORE the API starts, which is the order deploy.sh uses
+      # in production and the order this job had backwards.
+      #
+      # The API syncs the ~130-row product catalogue on startup (app/main.py).
+      # That sync is idempotent, startup-only, and deliberately non-fatal: an
+      # API booted against a schema with no `products` table logs a warning and
+      # then serves an empty catalogue for the life of the process. Migrations
+      # arriving a second later do not undo it, and nothing retries. That is
+      # why every M9 market spec failed on `POST /market/wishlist -> 404` while
+      # search still returned offers -- the provider generates those, but
+      # tracking one has to resolve it against a table that was never filled.
+      #
+      # `run --rm` starts postgres/redis/minio via depends_on without starting
+      # the API, so there is no window where it can boot too early.
+      - name: Apply migrations
+        run: docker compose run --rm api alembic upgrade head
+
       # `worker` is in this list because the specs assume `make up`, which
       # starts it -- and because the diagnostics step below already dumps its
       # logs, which it could never have produced while it was never started.
       # Receipt processing and the notification sweep have no other executor.
       - name: Start backend stack
         run: docker compose up -d --wait postgres redis minio api worker
-
-      - name: Apply migrations
-        run: docker compose exec -T api alembic upgrade head
 
       - name: Install frontend
         working-directory: frontend
