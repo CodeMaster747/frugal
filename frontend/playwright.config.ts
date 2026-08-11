@@ -28,7 +28,15 @@ export default defineConfig({
   // still absorb the cold start locally, where `npm run dev` is the point.
   // Raising the pool was still correct and is kept — see `db_pool_size` in the
   // backend config.
-  workers: process.env.CI ? 2 : 3,
+  //
+  // CI is serial for a different reason: contention, not compilation. A GitHub
+  // runner has two cores, and by the time the suite starts they are shared by
+  // Postgres, Redis, MinIO, uvicorn, a Celery worker fitting Prophet models at
+  // ~450 MB, the Next server, and a Chromium per test worker. Two test workers
+  // on two cores left every remaining failure as a timeout — 38 of them on one
+  // 40s assertion, with no functional error anywhere in the run. Serial is
+  // slower and finishes.
+  workers: process.env.CI ? 1 : 3,
   timeout: 60_000,
 
   use: {
