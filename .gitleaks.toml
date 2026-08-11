@@ -1,0 +1,33 @@
+# Gitleaks configuration.
+#
+# CI runs gitleaks against the git history, where this barely matters: the paths
+# excluded below are all gitignored and were never committed. It matters for a
+# local `gitleaks dir .`, which walks the working tree including build output —
+# a scan there reports 14 findings, 13 of them Next.js build artifacts, and a
+# scanner that cries wolf thirteen times is one nobody reads.
+
+[extend]
+useDefault = true
+
+[allowlist]
+description = "Paths and values that are not secrets"
+
+paths = [
+  # Next.js writes generated preview and prerender tokens into its build
+  # output. They are per-build, local, and gitignored.
+  '''frontend/\.next/.*''',
+  '''frontend/node_modules/.*''',
+  '''node_modules/.*''',
+  # Playwright traces and screenshots from failed runs.
+  '''frontend/test-results/.*''',
+  '''frontend/playwright-report/.*''',
+  # Documents the *shape* of configuration, never a value.
+  '''\.env\.example''',
+]
+
+regexes = [
+  # Angle-bracket placeholders in documentation, e.g. <r2-token-secret>.
+  # Narrow on purpose: it matches the placeholder syntax itself, so a real
+  # secret pasted into a document is still caught.
+  '''<[a-z0-9-]+(key|secret|token|password|id)>''',
+]

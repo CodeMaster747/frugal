@@ -1,0 +1,245 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  PYTHON_VERSION: "3.11"
+  NODE_VERSION: "22"
+
+jobs:
+  backend:
+    name: Backend
+    runs-on: ubuntu-latest
+
+    # Integration tests run against real Postgres and Redis, never SQLite:
+    # SQLite silently accepts partial indexes, CITEXT, and NUMERIC semantics
+    # that Postgres enforces, so behaviour must be verified against the real
+    # engine. These are the same services docker-compose provides locally.
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: frugal
+          POSTGRES_PASSWORD: frugal
+          POSTGRES_DB: frugal_test
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U frugal"
+          --health-interval 5s --health-timeout 3s --health-retries 10
+      redis:
+        image: redis:7-alpine
+        ports: ["6379:6379"]
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s --health-timeout 3s --health-retries 10
+
+    env:
+      ENVIRONMENT: ci
+      DATABASE_URL: postgresql+asyncpg://frugal:frugal@localhost:5432/frugal_test
+      TEST_DATABASE_URL: postgresql+asyncpg://frugal:frugal@localhost:5432/frugal_test
+      REDIS_URL: redis://localhost:6379/0
+      JWT_SECRET: ci-secret-not-used-outside-ci-0123456789ab
+      LOG_FORMAT: console
+      LOG_LEVEL: WARNING
+
+    defaults:
+      run:
+        working-directory: backend
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: pip
+
+      - name: Install
+        run: pip install -e ".[auth,dev]"
+
+      - name: Lint
+        run: ruff check app tests
+
+      - name: Format check
+        run: ruff format --check app tests
+
+      - name: Types
+        run: mypy app
+
+      # The contract that keeps module extraction cheap (ADR-001). A boundary
+      # rule maintained by review decays; one maintained by a failing build
+      # does not.
+      - name: Module boundaries
+        run: lint-imports --config .importlinter
+
+      - name: Migrations apply cleanly
+        run: alembic upgrade head
+
+      - name: Migrations reverse cleanly
+        run: alembic downgrade base && alembic upgrade head
+
+      - name: Tests
+        run: pytest --cov=app --cov-report=term-missing --cov-fail-under=80
+
+  frontend:
+    name: Frontend
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: frontend
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Install
+        run: npm ci
+
+      - name: Generate route types
+        run: npx next typegen
+
+      - name: Lint
+        run: npm run lint
+
+      - name: Format check
+        run: npm run format:check
+
+      - name: Types
+        run: npm run typecheck
+
+      - name: Build
+        run: npm run build
+
+  e2e:
+    name: E2E smoke
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      # The smoke spec asserts the frontend actually reaches the backend, so
+      # the real stack runs -- a mocked API would not prove the path.
+      - name: Start backend stack
+        run: docker compose up -d --wait postgres redis minio api
+
+      - name: Apply migrations
+        run: docker compose exec -T api alembic upgrade head
+
+      - name: Install frontend
+        working-directory: frontend
+        run: npm ci
+
+      - name: Install browser
+        working-directory: frontend
+        run: npx playwright install --with-deps chromium
+
+      - name: Run smoke tests
+        working-directory: frontend
+        run: npm run e2e
+
+      - name: Collect diagnostics on failure
+        if: failure()
+        run: docker compose logs --no-color api worker
+
+      - uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: playwright-report
+          path: frontend/playwright-report/
+          retention-days: 7
+
+  images:
+    name: Docker images
+    runs-on: ubuntu-latest
+    needs: [backend, frontend, e2e]
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: docker/setup-buildx-action@v3
+
+      # Build only -- publishing happens on the deploy workflow (M11). Proving
+      # the images build keeps a broken Dockerfile from being discovered at
+      # deploy time.
+      - name: Build API image
+        uses: docker/build-push-action@v6
+        with:
+          context: ./backend
+          file: ./infra/docker/backend.Dockerfile
+          push: false
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Build worker image
+        uses: docker/build-push-action@v6
+        with:
+          context: ./backend
+          file: ./infra/docker/worker.Dockerfile
+          push: false
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+  security:
+    name: Security scan
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Filesystem vulnerability scan
+        uses: aquasecurity/trivy-action@master
+        with:
+          scan-type: fs
+          scan-ref: .
+          severity: HIGH,CRITICAL
+          exit-code: "1"
+          ignore-unfixed: true
+
+      # The filesystem scan above covers the frontend only. It finds
+      # package-lock.json and reads it; the backend has no lock file for it to
+      # parse, so Python dependencies were never scanned at all and the job
+      # reported clean. Scanning the built image reads the installed packages
+      # directly, which is what surfaced six HIGH findings (setuptools, wheel,
+      # jaraco.context, msgpack) that had been invisible.
+      - name: Build the API image for scanning
+        run: |
+          docker build \
+            --file infra/docker/backend.Dockerfile \
+            --build-arg INSTALL_EXTRAS=auth,ocr,classify \
+            --tag frugal-api:scan \
+            backend
+
+      - name: Image vulnerability scan
+        uses: aquasecurity/trivy-action@master
+        with:
+          scan-type: image
+          image-ref: frugal-api:scan
+          severity: HIGH,CRITICAL
+          exit-code: "1"
+          ignore-unfixed: true
+
+      - name: Secret scan
+        uses: gitleaks/gitleaks-action@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # Excludes build output, which is gitignored and so absent from the
+          # git-history scan CI runs, but present for a local `gitleaks dir .`
+          # -- where it produced 13 false positives out of 14 findings.
+          GITLEAKS_CONFIG: .gitleaks.toml

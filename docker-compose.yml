@@ -1,0 +1,152 @@
+# Local development stack.
+#
+# MinIO stands in for S3 behind the ObjectStore port (ADR-004), so the full
+# stack -- including receipt upload -- runs with no AWS account and no
+# credentials. Postgres and Redis are containerised locally; in production they
+# are Neon and Upstash, because 1 GB of RAM cannot host them alongside the app.
+
+name: frugal
+
+x-backend-env: &backend-env
+  ENVIRONMENT: local
+  DATABASE_URL: postgresql+asyncpg://frugal:frugal@postgres:5432/frugal
+  REDIS_URL: redis://redis:6379/0
+  JWT_SECRET: local-dev-secret-change-me-0123456789abcdef
+  LOG_FORMAT: console
+  LOG_LEVEL: INFO
+  STORAGE_BACKEND: minio
+  S3_ENDPOINT_URL: http://minio:9000
+  S3_ACCESS_KEY: minioadmin
+  S3_SECRET_KEY: minioadmin
+  S3_BUCKET: frugal-receipts
+  OCR_ENGINE: fake
+  PRICE_PROVIDER: simulated_market
+  CORS_ORIGINS: http://localhost:3000
+  # Relaxed for local development and the E2E suite, which legitimately creates
+  # many accounts from one IP. Production keeps the defaults in Settings, and
+  # the backend rate-limit tests pin their own values so this cannot mask a
+  # regression.
+  REGISTRATIONS_PER_IP_PER_HOUR: 5000
+  LOGIN_ATTEMPTS_PER_IP: 2000
+  REFRESHES_PER_HOUR: 2000
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: frugal
+      POSTGRES_PASSWORD: frugal
+      POSTGRES_DB: frugal
+    ports: ["5432:5432"]
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./infra/docker/init-test-db.sql:/docker-entrypoint-initdb.d/10-test-db.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U frugal -d frugal"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  redis:
+    image: redis:7-alpine
+    command: redis-server --save "" --appendonly no
+    ports: ["6379:6379"]
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  minio:
+    image: minio/minio:latest
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: minioadmin
+      MINIO_ROOT_PASSWORD: minioadmin
+    ports:
+      - "9000:9000"
+      - "9001:9001"   # web console
+    volumes:
+      - minio_data:/data
+    healthcheck:
+      test: ["CMD", "mc", "ready", "local"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  api:
+    build:
+      context: ./backend
+      dockerfile: ../infra/docker/backend.Dockerfile
+      args:
+        # Local image carries the dev toolchain, because `make test` and
+        # `make lint` execute inside this container. Production builds omit it.
+        INSTALL_EXTRAS: "auth,dev,ocr,classify"
+        WITH_OCR: "true"
+        # `make lint` and `make test` run inside this container, so installing a
+        # tool here is routine. Production images strip pip -- it vendors
+        # dependencies that show up as scanner findings and is a useful foothold
+        # in a container that never legitimately installs anything.
+        KEEP_PIP: "true"
+    environment:
+      <<: *backend-env
+      # Integration tests target a separate database so they never destroy
+      # local development data.
+      TEST_DATABASE_URL: postgresql+asyncpg://frugal:frugal@postgres:5432/frugal_test
+    ports: ["8000:8000"]
+    volumes:
+      # Whole directory, not individual files: a single-file bind mount breaks
+      # when an editor replaces the inode, and the container then reads stale
+      # content. Writable so `make format` can apply fixes; tool caches are
+      # redirected to /tmp so they never land in the repo.
+      - ./backend:/app
+    command: >
+      uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
+    depends_on:
+      postgres: {condition: service_healthy}
+      redis: {condition: service_healthy}
+      minio: {condition: service_healthy}
+
+  worker:
+    build:
+      context: ./backend
+      dockerfile: ../infra/docker/worker.Dockerfile
+      args:
+        INSTALL_EXTRAS: "auth,ocr,classify,forecast"
+    environment: *backend-env
+    volumes:
+      - ./backend/app:/app/app:ro
+    depends_on:
+      postgres: {condition: service_healthy}
+      redis: {condition: service_healthy}
+    healthcheck:
+      test: ["CMD-SHELL", "celery -A app.workers.celery_app.celery_app inspect ping -d celery@$$HOSTNAME || exit 1"]
+      interval: 20s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+
+  beat:
+    build:
+      context: ./backend
+      dockerfile: ../infra/docker/backend.Dockerfile
+    environment: *backend-env
+    volumes:
+      - ./backend/app:/app/app:ro
+    # Beat persists its schedule to a file; /app is not writable by the
+    # unprivileged user, so point it somewhere that is.
+    command: >
+      celery -A app.workers.celery_app.celery_app beat --loglevel=info
+      --schedule=/tmp/celerybeat-schedule
+    depends_on:
+      redis: {condition: service_healthy}
+    healthcheck:
+      test: ["CMD-SHELL", "test -f /tmp/celerybeat-schedule.db || test -f /tmp/celerybeat-schedule"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
+
+volumes:
+  postgres_data:
+  minio_data:

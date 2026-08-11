@@ -1,0 +1,57 @@
+# Caddy terminates TLS in front of the API.
+#
+# Caddy rather than nginx because certificate issuance and renewal are built in.
+# An expired certificate is one of the likelier ways a small deployment goes
+# down, and it happens at 3am on a certbot cron nobody checked.
+#
+# {$DOMAIN} comes from the environment. With no domain configured it falls back
+# to `:80`, which serves plain HTTP — fine for a first smoke test, not for
+# anything holding real financial data.
+
+{$DOMAIN} {
+	encode zstd gzip
+
+	# The frontend is on Vercel; this host serves the API only.
+	handle /api/* {
+		reverse_proxy api:8000 {
+			health_uri /health/ready
+			health_interval 30s
+
+			# The application reads the client address for rate limiting. Without
+			# these the limiter sees Caddy's address for every request and would
+			# throttle all users as one.
+			header_up X-Real-IP {remote_host}
+		}
+	}
+
+	handle /health* {
+		reverse_proxy api:8000
+	}
+
+	# Anything else is not part of this service. A bare 404 rather than a proxy,
+	# so the API is not probed through paths it does not own.
+	handle {
+		respond "Not found" 404
+	}
+
+	header {
+		# HSTS. Two years, and preload-eligible. Only meaningful once a real
+		# certificate is in place; harmless before that.
+		Strict-Transport-Security "max-age=63072000; includeSubDomains; preload"
+
+		X-Content-Type-Options "nosniff"
+		X-Frame-Options "DENY"
+		Referrer-Policy "strict-origin-when-cross-origin"
+
+		# The API returns JSON only, so nothing here is ever a document context.
+		Content-Security-Policy "default-src 'none'; frame-ancestors 'none'"
+
+		# Do not advertise the server.
+		-Server
+	}
+
+	log {
+		output stdout
+		format json
+	}
+}

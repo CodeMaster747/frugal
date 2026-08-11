@@ -1,0 +1,26 @@
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Sid": "DenyEverythingExceptReadingTheBill",
+      "Effect": "Deny",
+      "NotAction": [
+        "aws-portal:*",
+        "budgets:*",
+        "ce:*",
+        "cur:*",
+        "support:*",
+        "iam:ListPolicies",
+        "iam:GetPolicy",
+        "iam:DetachUserPolicy",
+        "ec2:DescribeInstances",
+        "ec2:TerminateInstances",
+        "ec2:StopInstances",
+        "s3:ListAllMyBuckets",
+        "s3:DeleteBucket",
+        "s3:DeleteObject"
+      ],
+      "Resource": "*"
+    }
+  ]
+}

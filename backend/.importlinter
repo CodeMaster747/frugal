@@ -1,0 +1,115 @@
+; Module boundary contracts (ADR-001).
+;
+; A boundary rule maintained by code review decays -- every "just this once"
+; import is individually reasonable and collectively fatal. These contracts make
+; violations a build failure instead, which is the entire point.
+;
+; Run with: lint-imports --config .importlinter
+;
+; NOTE: import-linter errors on a contract naming a module that does not exist,
+; so contracts are enabled as their modules land. The template at the bottom is
+; activated in M1; leaving it commented is honest -- a contract referencing
+; absent modules enforces nothing.
+
+[importlinter]
+root_package = app
+include_external_packages = False
+
+[importlinter:contract:core-independence]
+name = Core imports nothing from the layers above it
+type = forbidden
+source_modules =
+    app.core
+forbidden_modules =
+    app.modules
+    app.api
+    app.workers
+    app.adapters
+
+[importlinter:contract:adapters-independence]
+name = Adapters depend only on core, never on domain modules or the API
+type = forbidden
+source_modules =
+    app.adapters
+forbidden_modules =
+    app.modules
+    app.api
+    app.workers
+
+[importlinter:contract:layered-architecture]
+name = Dependencies point inward
+type = layers
+; Layer names are relative to the container. Highest layer first; `|` marks
+; siblings in the same layer that must stay independent of each other -- the
+; API and the workers are two entry points into the same domain, and neither
+; may import the other.
+layers =
+    api | workers
+    modules
+    adapters
+    core
+containers =
+    app
+exhaustive = False
+
+
+; --- Module privacy -------------------------------------------------------
+;
+; The contract that actually keeps extraction cheap: no module may reach into
+; another's internals, so all cross-module traffic goes through service.py.
+; Extended with each milestone's new modules; import-linter errors on a
+; contract naming a module that does not exist, so entries land with the code.
+
+[importlinter:contract:auth-internals-are-private]
+name = Only the auth module may import its own models and repository
+type = forbidden
+; Direct imports only. Without this the contract follows the legitimate chain
+; api.v1 -> auth.router -> auth.service -> auth.models, which is a module using
+; its *own* internals -- exactly what is allowed.
+allow_indirect_imports = true
+source_modules =
+    app.api.system
+    app.api.v1
+    app.api.middleware
+    app.workers
+forbidden_modules =
+    app.modules.auth.models
+    app.modules.auth.repository
+
+[importlinter:contract:finance-repositories-are-private]
+name = Only finance may use its own repositories
+type = forbidden
+; A repository is a module's private data access. Reaching into another
+; module's repository couples callers to its table layout, which is exactly the
+; coupling that makes extraction expensive later. Everything crosses at
+; `service.py`.
+allow_indirect_imports = true
+source_modules =
+    app.api.system
+    app.api.v1
+    app.api.middleware
+    app.workers
+    app.modules.auth
+    app.modules.receipts
+    app.modules.categorization
+    app.modules.analytics
+forbidden_modules =
+    app.modules.finance.repository
+
+[importlinter:contract:finance-models-stay-behind-the-service]
+name = Consumer modules reach finance through its service, not its tables
+type = forbidden
+; `analytics` is deliberately absent from this list. It is a read model over
+; finance's schema: its whole job is aggregating transactions in SQL, and
+; routing that through a service would mean loading every row into Python to
+; sum it -- strictly slower and no less coupled. That exception is a decision,
+; recorded here, not an oversight; if analytics is ever extracted it takes a
+; read replica of the same schema with it.
+;
+; `receipts` and `categorization` have no such excuse: they read a handful of
+; rows and belong behind `FinanceService`.
+allow_indirect_imports = true
+source_modules =
+    app.modules.categorization
+forbidden_modules =
+    app.modules.finance.models

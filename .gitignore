@@ -1,0 +1,58 @@
+# --- secrets ---------------------------------------------------------------
+.env
+.env.*
+!.env.example
+!.env.local.example
+*.pem
+*.key
+
+# --- python ----------------------------------------------------------------
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+coverage.xml
+htmlcov/
+
+# --- node ------------------------------------------------------------------
+node_modules/
+.next/
+out/
+.vercel/
+*.tsbuildinfo
+next-env.d.ts
+
+# --- ml artefacts ----------------------------------------------------------
+# Model binaries are built by `make eval`/training, not committed. Versioned
+# artefacts belong in S3 (M5).
+*.joblib
+*.pkl
+models/
+
+# --- local data ------------------------------------------------------------
+*.db
+*.sqlite3
+celerybeat-schedule*
+
+# Playwright run artefacts. Traces and screenshots of a failed E2E run are
+# captured against a seeded account, so they can carry real form input.
+test-results/
+playwright-report/
+
+# --- os / editor -----------------------------------------------------------
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/*
+!.vscode/extensions.json
+
+# Database dumps and receipt images written by infra/ops/backup.sh. Its default
+# destination is ./backups, so without this a routine backup puts every user's
+# financial data one `git add -A` away from being committed.
+backups/
+*.dump

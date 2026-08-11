@@ -1,0 +1,184 @@
+[project]
+name = "frugal-backend"
+version = "0.1.0"
+description = "Frugal — The Intelligent Financial Decision Platform"
+requires-python = ">=3.11,<3.13"
+
+dependencies = [
+    "fastapi>=0.115.0",
+    "uvicorn[standard]>=0.32.0",
+    # [email] pulls email-validator, required by EmailStr.
+    "pydantic[email]>=2.9.0",
+    "pydantic-settings>=2.6.0",
+    "sqlalchemy[asyncio]>=2.0.36",
+    "alembic>=1.14.0",
+    "asyncpg>=0.30.0",
+    "psycopg[binary]>=3.2.0",
+    "redis>=5.2.0",
+    "celery>=5.4.0",
+    # Transitive, via celery/kombu, and pinned here only as a security floor:
+    # 1.1.2 has an out-of-bounds read on Unpacker reuse (GHSA-6v7p-g79w-8964)
+    # and celery's own constraint is loose enough to resolve to it. Unlike the
+    # setuptools and wheel findings, this one is on the runtime path -- msgpack
+    # deserialises task payloads off the broker.
+    "msgpack>=1.2.1",
+    "python-multipart>=0.0.12",
+    "aioboto3>=13.2.0",
+]
+
+[project.optional-dependencies]
+# Kept separate so the API image does not carry auth/ML weight it never uses.
+auth = [
+    "argon2-cffi>=23.1.0",
+    "pyjwt>=2.10.0",
+    "authlib>=1.3.2",
+    # Signs the short-lived session Authlib uses to carry the OAuth nonce and
+    # PKCE verifier between the redirect and the callback.
+    "itsdangerous>=2.2.0",
+]
+# Split from `ml` on purpose: OCR needs OpenCV and Tesseract but not Prophet's
+# ~400 MB toolchain, and the local dev image installs `ocr` so the eval harness
+# runs without paying for the forecasting stack.
+ocr = [
+    "opencv-python-headless>=4.10.0",
+    "pytesseract>=0.3.13",
+    "pillow>=11.0.0",
+    "numpy>=1.26.0,<2.2",
+    "aioboto3>=13.2.0",
+]
+# Categorisation only: TF-IDF and logistic regression. Split from `forecast`
+# so the dev image can run the classifier eval without pulling Prophet's
+# ~400 MB toolchain (ADR-006 -- the API never imports either).
+classify = [
+    "scikit-learn>=1.5.2",
+    "numpy>=1.26.0,<2.2",
+    "joblib>=1.4.0",
+]
+forecast = [
+    "prophet>=1.1.6",
+    "pandas>=2.2.0",
+    "numpy>=1.26.0,<2.2",
+]
+dev = [
+    "pytest>=8.3.0",
+    "pytest-asyncio>=0.24.0",
+    "pytest-cov>=6.0.0",
+    "httpx>=0.28.0",
+    "ruff>=0.8.0",
+    "mypy>=1.13.0",
+    "import-linter>=2.1",
+]
+# types-redis is deliberately absent: it is deprecated and shadows the inline
+# type hints redis-py now ships, producing worse results than no stub at all.
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+include = ["app*"]
+
+# ---------------------------------------------------------------------------
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+src = ["."]
+# The app directory is mounted read-only in the container; keep caches off it.
+cache-dir = "/tmp/.ruff_cache"
+
+[tool.ruff.lint]
+# `×` in user-facing copy ("4.5× your typical transaction") is a deliberate
+# typographic choice, as are `—` and curly quotes. The confusables rules exist
+# to catch a Cyrillic `а` smuggled into an identifier, not to force ASCII on
+# prose a user reads.
+allowed-confusables = ["×", "−", "—", "–", "“", "”", "’", "→", "▼", "▲"]
+select = [
+    "E", "W",    # pycodestyle
+    "F",         # pyflakes
+    "I",         # isort
+    "N",         # pep8-naming
+    "UP",        # pyupgrade
+    "B",         # bugbear
+    "C4",        # comprehensions
+    "SIM",       # simplify
+    "RUF",       # ruff-specific
+    "ASYNC",     # async correctness
+    "S",         # bandit security
+    "DTZ",       # naive datetime usage
+]
+# TC00x (move imports into TYPE_CHECKING) is deliberately NOT enabled. FastAPI,
+# Pydantic, and SQLAlchemy all resolve annotations at runtime -- handler
+# signatures, model fields, and Mapped[...] declarations. Deferring those
+# imports breaks resolution at import time, so the rule trades working code for
+# a negligible startup saving.
+ignore = [
+    "E501",    # line length is ruff-format's job
+    "B008",    # FastAPI's Depends() in defaults is the framework idiom
+    "S101",    # assert is how pytest works
+]
+
+[tool.ruff.lint.per-file-ignores]
+# Hardcoded test credentials; dict() reads better for fixtures; seeded RNG is
+# the point of a reproducible eval harness; naive dates are fine in fixtures.
+"tests/*" = ["S105", "S106", "C408", "S311", "DTZ011"]
+"alembic/versions/*" = ["N999", "F401"]  # generated file naming
+
+
+[tool.ruff.lint.isort]
+known-first-party = ["app"]
+
+# ---------------------------------------------------------------------------
+
+[tool.mypy]
+python_version = "3.11"
+strict = true
+warn_unreachable = true
+plugins = ["pydantic.mypy"]
+exclude = ["alembic/versions/"]
+cache_dir = "/tmp/.mypy_cache"
+
+[[tool.mypy.overrides]]
+module = [
+    "celery.*", "prophet.*", "cv2.*", "pytesseract.*", "sklearn.*",
+    "authlib.*", "aioboto3.*", "botocore.*", "PIL.*", "joblib.*",
+    # Not installed in the API image at all, so stubs cannot be resolved there.
+    "pandas.*",
+]
+ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
+module = "tests.*"
+disallow_untyped_defs = false
+
+# ---------------------------------------------------------------------------
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+asyncio_mode = "auto"
+addopts = "-q --strict-markers -m 'not eval'"
+# The app directory is read-only in the container; keep pytest's cache off it.
+cache_dir = "/tmp/.pytest_cache"
+markers = [
+    "integration: requires a live Postgres and Redis",
+    "eval: AI evaluation harness; slow, and reports a baseline rather than passing/failing on one run",
+]
+filterwarnings = ["error::DeprecationWarning:app.*"]
+
+[tool.coverage.run]
+source = ["app"]
+omit = ["app/workers/celery_app.py", "app/core/queue.py", "*/__init__.py"]
+# SQLAlchemy's asyncio layer bridges sync and async through greenlet, so a
+# coroutine resumes inside a different greenlet after any database await.
+# Without this, coverage silently stops tracing at the first query and reports
+# well-tested code as unexecuted -- which is worse than no coverage, because it
+# hides what is genuinely untested.
+concurrency = ["greenlet", "thread"]
+
+[tool.coverage.report]
+exclude_lines = [
+    "pragma: no cover",
+    "if TYPE_CHECKING:",
+    "raise NotImplementedError",
+    "@abstractmethod",
+]

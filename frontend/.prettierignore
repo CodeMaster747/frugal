@@ -1,0 +1,10 @@
+# Generated from the backend's OpenAPI schema by `npm run generate:types`.
+# Committed so a backend field rename surfaces as a TypeScript error rather
+# than a runtime undefined, but never hand-edited or reformatted -- formatting
+# it would produce a spurious diff on every regeneration.
+src/lib/api/schema.d.ts
+
+.next/
+node_modules/
+playwright-report/
+test-results/

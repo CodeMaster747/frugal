@@ -1,0 +1,47 @@
+# Render blueprint -- the frontend only.
+#
+# The API, Celery worker, and beat are not here on purpose. Render's free
+# instance type covers web services and static sites; Background Workers and
+# Cron Jobs are paid, and a free instance is 512 MB against a worker that
+# measures ~450 MB during a Prophet fit or an OpenCV pipeline (ADR-006). Those
+# three run on the EC2 t3.micro in infra/aws/, which has 1 GB plus 2 GB of swap
+# and was sized for exactly that budget.
+#
+# This service is not only the UI. It also proxies /api and /health to the API
+# (see frontend/next.config.ts), which is what keeps the refresh cookie
+# same-site -- `onrender.com` is on the Public Suffix List, so two Render
+# subdomains are two different sites to a browser.
+
+services:
+  - type: web
+    name: frugal-web
+    runtime: node
+    plan: free
+    # Closest free region to ap-south-1, where the API runs. Every API call is
+    # a second hop from here, so the distance is paid on every request.
+    region: singapore
+    rootDir: frontend
+    buildCommand: npm ci && npm run build
+    # `next start` reads PORT, but Render assigns it at runtime and an implicit
+    # dependency here is a silent bind-to-3000 and a failed health check.
+    startCommand: npm run start -- -p $PORT
+    healthCheckPath: /
+    envVars:
+      # Pinned to what CI builds against (.github/workflows/ci.yml).
+      - key: NODE_VERSION
+        value: "22"
+
+      # Where the rewrites in next.config.ts send /api and /health. Server-side
+      # only -- the browser never sees it. Must be https: this hop crosses the
+      # public internet carrying bearer tokens.
+      #   e.g. https://frugal-api.duckdns.org
+      - key: BACKEND_ORIGIN
+        sync: false
+
+      # This service's own public URL. Inlined into the client bundle at build
+      # time, so changing it needs a redeploy, not just a restart. Setting it to
+      # this origin (rather than the API's) is what makes every request
+      # same-origin and keeps the httpOnly refresh cookie working.
+      #   e.g. https://frugal-web.onrender.com
+      - key: NEXT_PUBLIC_API_URL
+        sync: false

@@ -1,0 +1,243 @@
+@import "tailwindcss";
+@import "tw-animate-css";
+
+/* Frugal design system.
+ *
+ * Values come from docs/05-ui-wireframes.md and were validated with the
+ * colorblind-safety validator in both modes. Dark is a *selected* set of steps
+ * checked against the dark surface, not an inverted light palette.
+ *
+ * Light mode carries a known contrast warning on the aqua and yellow chart
+ * slots (2.74:1 and 2.11:1, below 3:1). That is a binding obligation, not a
+ * note: any light-mode chart using those slots must ship direct labels or a
+ * table view. ChartContainer enforces it in code from M3.
+ */
+
+@custom-variant dark (&:where(.dark, .dark *));
+
+:root {
+  /* --- surfaces & ink --- */
+  --page: #f9f9f7;
+  --surface: #fcfcfb;
+  --surface-raised: #ffffff;
+  --ink: #0b0b0b;
+  --ink-secondary: #52514e;
+  --ink-muted: #898781;
+  --gridline: #e1e0d9;
+  --baseline: #c3c2b7;
+  /* 8% rather than 10%: pure black at 10% on a near-white surface reads heavier
+   * than the same figure does inverted on the dark surface. */
+  --hairline: rgb(11 11 11 / 0.08);
+  --ring: #2a78d6;
+
+  /* --- categorical chart slots: fixed order, never cycled --- */
+  --series-1: #2a78d6; /* blue   — income, projected balance */
+  --series-2: #eb6834; /* orange — expense */
+  --series-3: #1baf7a; /* aqua   — savings, net worth */
+  --series-4: #eda100; /* yellow — fourth series (rare) */
+
+  /* --- sequential ramp (magnitude): one hue, light to dark --- */
+  --seq-100: #cde2fb;
+  --seq-250: #86b6ef;
+  --seq-400: #3987e5;
+  --seq-550: #1c5cab;
+  --seq-700: #0d366b;
+
+  /* --- diverging (over/under budget): two poles, neutral gray midpoint --- */
+  --div-negative: #d03b3b;
+  --div-neutral: #f0efec;
+  --div-positive: #2a78d6;
+
+  /* --- status: reserved, never reused as a series --- */
+  --status-good: #0ca30c;
+  --status-warning: #fab219;
+  --status-serious: #ec835a;
+  --status-critical: #d03b3b;
+  --delta-up: #006300;
+}
+
+.dark {
+  /* Depth comes from three stacked surface steps, not from shadows: page <
+   * surface < surface-raised. Each step is a few points of lightness, enough to
+   * separate without any component appearing to float. Page is deliberately off
+   * pure black -- #000 makes every border above it look like a seam. */
+  --page: #0f0f0f;
+  --surface: #17171a;
+  --surface-raised: #1f1f23;
+  --ink: #ffffff;
+  --ink-secondary: #c3c2b7;
+  --ink-muted: #898781;
+  --gridline: #26262b;
+  --baseline: #33333a;
+  --hairline: rgb(255 255 255 / 0.1);
+  --ring: #3987e5;
+
+  --series-1: #3987e5;
+  --series-2: #d95926;
+  --series-3: #199e70;
+  --series-4: #c98500;
+
+  --div-neutral: #383835;
+  --div-positive: #3987e5;
+
+  /* Status steps are mode-invariant: all four clear 3:1 on the dark surface. */
+  --delta-up: #0ca30c;
+}
+
+@theme inline {
+  --color-page: var(--page);
+  --color-surface: var(--surface);
+  --color-surface-raised: var(--surface-raised);
+  --color-ink: var(--ink);
+  --color-ink-secondary: var(--ink-secondary);
+  --color-ink-muted: var(--ink-muted);
+  --color-gridline: var(--gridline);
+  --color-baseline: var(--baseline);
+  --color-hairline: var(--hairline);
+  --color-ring: var(--ring);
+
+  --color-series-1: var(--series-1);
+  --color-series-2: var(--series-2);
+  --color-series-3: var(--series-3);
+  --color-series-4: var(--series-4);
+
+  --color-good: var(--status-good);
+  --color-warning: var(--status-warning);
+  --color-serious: var(--status-serious);
+  --color-critical: var(--status-critical);
+  --color-delta-up: var(--delta-up);
+
+  /* System sans throughout, including hero figures. No display or serif face. */
+  --font-sans: var(--font-geist-sans), system-ui, -apple-system, "Segoe UI", sans-serif;
+  --font-mono: var(--font-geist-mono), ui-monospace, monospace;
+
+  /* Four radii, and nothing else. `--radius-*` is a Tailwind v4 namespace, so
+   * these emit `rounded-control` / `rounded-card` / `rounded-inner` /
+   * `rounded-swatch` -- always prefer those over `rounded-[var(--radius-*)]`.
+   *
+   * `inner` is concentric, not arbitrary: a 6px container with 2px of padding
+   * needs 6 - 2 = 4px inside it, or the nested corner reads thicker than the
+   * outer one. `swatch` is for the 10px legend chips, where a larger radius
+   * would round them into circles. */
+  --radius-swatch: 2px;
+  --radius-inner: 4px;
+  --radius-control: 6px;
+  --radius-card: 10px;
+
+  /* One easing curve for the whole app. Decelerating, no overshoot: interface
+   * motion should settle, not bounce. */
+  --ease-standard: cubic-bezier(0.2, 0, 0, 1);
+
+  /* Retunes what bare `transition-*` utilities resolve to, so every hover in
+   * the app inherits the token without naming a duration at the call site.
+   * 150ms is quick enough to feel like a response rather than an animation. */
+  --default-transition-duration: 150ms;
+  --default-transition-timing-function: cubic-bezier(0.2, 0, 0, 1);
+}
+
+/* Typography roles.
+ *
+ * Six named steps for the application, plus `type-hero` for the public home
+ * screen, because the pre-existing scale had none: `text-sm` and
+ * `text-xs` were 86% of all type, section headings were the same 14px as the
+ * body text under them, and there was nothing at all between 14px and 24px.
+ * `type-section` is that missing step and is what gives a page hierarchy.
+ *
+ * Deliberately *not* named `text-*`: tailwind-merge classifies an unrecognised
+ * `text-foo` as a text-colour utility, so `cn("text-title", "text-ink-muted")`
+ * would silently drop the size. `type-*` collides with no namespace.
+ *
+ * Size, weight, tracking and leading travel together in one class -- that is
+ * the whole point, and the reason these are `@utility` and not theme keys. */
+/* The seventh role, and the only one the application chrome never uses.
+ *
+ * `type-display` tops out at 32px, which is right for a page that opens into
+ * work and too quiet for the public home screen, where the headline is the
+ * whole first screen. 48px is not a new ceiling: it is the size already granted
+ * to the health score as the scale's one documented exception, reused here
+ * rather than invented. Applied as `type-display md:type-hero`, so the phone
+ * keeps the routine step and only a wide viewport gets the marketing one. */
+@utility type-hero {
+  font-size: 3rem;
+  line-height: 1.08;
+  letter-spacing: -0.035em;
+  font-weight: 600;
+}
+
+@utility type-display {
+  font-size: 2rem;
+  line-height: 1.15;
+  letter-spacing: -0.03em;
+  font-weight: 600;
+}
+
+@utility type-title {
+  font-size: 1.5rem;
+  line-height: 1.25;
+  letter-spacing: -0.02em;
+  font-weight: 600;
+}
+
+@utility type-section {
+  font-size: 1rem;
+  line-height: 1.4;
+  letter-spacing: -0.01em;
+  font-weight: 500;
+}
+
+@utility type-body {
+  font-size: 0.875rem;
+  line-height: 1.55;
+}
+
+@utility type-meta {
+  font-size: 0.75rem;
+  line-height: 1.45;
+}
+
+@utility type-eyebrow {
+  font-size: 0.75rem;
+  line-height: 1.35;
+  letter-spacing: 0.06em;
+  font-weight: 500;
+  text-transform: uppercase;
+}
+
+@layer base {
+  body {
+    background-color: var(--page);
+    color: var(--ink);
+    font-family: var(--font-sans);
+    -webkit-font-smoothing: antialiased;
+    /* A hair of negative tracking across everything. Geist, like most grotesques,
+     * is spaced for smaller optical sizes than a screen UI runs at; without this
+     * the copy reads very slightly loose. Headings tighten further on top. */
+    letter-spacing: -0.011em;
+  }
+
+  /* Visible focus is a WCAG 2.1 AA requirement, not a preference (NFR-6). */
+  :focus-visible {
+    outline: 2px solid var(--ring);
+    outline-offset: 2px;
+  }
+
+  /* Tabular figures only where digits must align vertically; standalone
+   * numbers keep proportional figures. */
+  .tabular,
+  th[data-numeric],
+  td[data-numeric] {
+    font-variant-numeric: tabular-nums;
+  }
+
+  /* Nothing may depend on animation to be understood (NFR-6). */
+  @media (prefers-reduced-motion: reduce) {
+    *,
+    *::before,
+    *::after {
+      animation-duration: 0.01ms !important;
+      animation-iteration-count: 1 !important;
+      transition-duration: 0.01ms !important;
+      scroll-behavior: auto !important;
+    }
+  }
+}
