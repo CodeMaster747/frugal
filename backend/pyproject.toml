@@ -144,6 +144,13 @@ module = [
     "authlib.*", "aioboto3.*", "botocore.*", "PIL.*", "joblib.*",
     # Not installed in the API image at all, so stubs cannot be resolved there.
     "pandas.*",
+    # numpy arrives with the `ocr` extra, alongside cv2 -- and the only two
+    # modules that import it import cv2 too. CI installs `.[auth,dev]`, so it
+    # is absent there while present in the container `make lint` runs in, which
+    # is why this passed locally and failed on the first push. numpy does ship
+    # py.typed, so wherever the extra *is* installed mypy still checks it
+    # properly: this suppresses the missing-stub error, not the type checking.
+    "numpy.*",
 ]
 ignore_missing_imports = true
 

@@ -23,9 +23,11 @@ export default defineConfig({
   // once, the *first* request to each route takes seconds while the rest queue
   // behind it. Once warm, the whole suite runs in ~20s.
   //
-  // The durable fix is to run these against a production build; until then
-  // these settings absorb the cold start. Raising the pool was still correct
-  // and is kept — see `db_pool_size` in the backend config.
+  // The durable fix is to run these against a production build. That is now
+  // what CI does (see `webServer` below); these settings stay because they
+  // still absorb the cold start locally, where `npm run dev` is the point.
+  // Raising the pool was still correct and is kept — see `db_pool_size` in the
+  // backend config.
   workers: process.env.CI ? 2 : 3,
   timeout: 60_000,
 
@@ -46,9 +48,21 @@ export default defineConfig({
   globalTeardown: "./e2e/global-teardown.ts",
 
   webServer: {
-    command: "npm run dev",
+    // A production build in CI; the dev server locally, where fast reload is
+    // the whole point of running these by hand.
+    //
+    // The first CI run of this suite lost 9 tests and needed retries on 17
+    // more, all of them timing out after a `load-demo` click while waiting for
+    // a route the dev server was still compiling. The numbers above were tuned
+    // on Apple silicon; a two-core runner compiling `/dashboard`, `/health`,
+    // and `/forecast` on demand under two parallel workers is a different
+    // machine entirely. `next start` serves routes that are already built, so
+    // no request pays for being the first to arrive.
+    command: process.env.CI ? "npm run build && npm run start" : "npm run dev",
     url: "http://localhost:3000",
     reuseExistingServer: !process.env.CI,
-    timeout: 120_000,
+    // In CI this budget has to cover a full production build before the server
+    // answers at all, not just a process start.
+    timeout: process.env.CI ? 300_000 : 120_000,
   },
 });

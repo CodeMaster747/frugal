@@ -136,8 +136,12 @@ jobs:
 
       # The smoke spec asserts the frontend actually reaches the backend, so
       # the real stack runs -- a mocked API would not prove the path.
+      # `worker` is in this list because the specs assume `make up`, which
+      # starts it -- and because the diagnostics step below already dumps its
+      # logs, which it could never have produced while it was never started.
+      # Receipt processing and the notification sweep have no other executor.
       - name: Start backend stack
-        run: docker compose up -d --wait postgres redis minio api
+        run: docker compose up -d --wait postgres redis minio api worker
 
       - name: Apply migrations
         run: docker compose exec -T api alembic upgrade head
