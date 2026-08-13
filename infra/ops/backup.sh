@@ -25,6 +25,12 @@ DEST="${1:-./backups}"
 STAMP="$(date -u +%Y%m%dT%H%M%SZ)"
 RUN="${DEST}/${STAMP}"
 
+# The client image. restore.sh reads the same variable and must resolve it to
+# the same major version: a custom-format dump written by pg_dump N cannot be
+# read by a pg_restore older than N, so a bump here that is not matched there
+# produces backups that only fail at restore time -- on the worst day.
+PG_IMAGE="${PG_IMAGE:-postgres:18-alpine}"
+
 : "${DATABASE_DIRECT_URL:?Set DATABASE_DIRECT_URL to the direct, non-pooled Neon endpoint. pg_dump against the pooled endpoint fails partway through a large dump}"
 
 mkdir -p "${RUN}"
@@ -43,7 +49,7 @@ say "1/3  Database"
 docker run --rm -i \
   --add-host=host.docker.internal:host-gateway \
   -v "$(cd "${RUN}" && pwd):/out" \
-  postgres:16-alpine \
+  "${PG_IMAGE}" \
   pg_dump --dbname="${DATABASE_DIRECT_URL/postgresql+asyncpg:/postgresql:}" \
   --format=custom --compress=9 --no-owner --no-privileges \
   --file="/out/database.dump"
@@ -70,7 +76,7 @@ fi
 
 say "3/3  Manifest"
 
-MIGRATION="$(docker run --rm -i --add-host=host.docker.internal:host-gateway postgres:16-alpine \
+MIGRATION="$(docker run --rm -i --add-host=host.docker.internal:host-gateway "${PG_IMAGE}" \
   psql "${DATABASE_DIRECT_URL/postgresql+asyncpg:/postgresql:}" \
   -tAc 'SELECT version_num FROM alembic_version' 2>/dev/null || echo 'unknown')"
 

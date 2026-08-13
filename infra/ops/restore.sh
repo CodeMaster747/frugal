@@ -23,6 +23,11 @@ TARGET_URL="${3:-}"
 DUMP="${SOURCE}/database.dump"
 [[ -f "${DUMP}" ]] || { echo "No database.dump in ${SOURCE}" >&2; exit 1; }
 
+# Must match backup.sh. pg_restore refuses an archive written by a newer
+# pg_dump, so this trails the dumping version only at the cost of every restore
+# failing. Keep the two in step, and prefer bumping both together.
+PG_IMAGE="${PG_IMAGE:-postgres:18-alpine}"
+
 say() { printf '\n\033[1m%s\033[0m\n' "$1"; }
 
 [[ -f "${SOURCE}/manifest.txt" ]] && { say "Manifest"; cat "${SOURCE}/manifest.txt"; }
@@ -35,7 +40,7 @@ case "${MODE}" in
     say "Starting a throwaway Postgres"
     docker run -d --rm --name "${CONTAINER}" \
       -e POSTGRES_PASSWORD="${PASSWORD}" -e POSTGRES_DB=restore_check \
-      postgres:16-alpine >/dev/null
+      "${PG_IMAGE}" >/dev/null
 
     # Removed however this script exits, including a failed restore.
     trap 'docker rm -f "${CONTAINER}" >/dev/null 2>&1 || true' EXIT
@@ -88,7 +93,7 @@ case "${MODE}" in
     [[ "${CONFIRM}" == "restore" ]] || { echo "Aborted."; exit 1; }
 
     docker run --rm -i --add-host=host.docker.internal:host-gateway \
-      -v "$(cd "${SOURCE}" && pwd):/in" postgres:16-alpine \
+      -v "$(cd "${SOURCE}" && pwd):/in" "${PG_IMAGE}" \
       pg_restore --dbname="${TARGET_URL/postgresql+asyncpg:/postgresql:}" \
       --no-owner --no-privileges --clean --if-exists /in/database.dump
 

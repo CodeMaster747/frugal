@@ -21,8 +21,11 @@ paths = [
   # Playwright traces and screenshots from failed runs.
   '''frontend/test-results/.*''',
   '''frontend/playwright-report/.*''',
-  # Documents the *shape* of configuration, never a value.
-  '''\.env\.example''',
+  # .env.example is deliberately NOT allowlisted. It is the one file in the repo
+  # that is both committed and shaped exactly like a secrets file, which makes it
+  # the easiest place to paste a real value into by mistake — editing it instead
+  # of the gitignored .env is a single-keystroke error. Scanning it costs
+  # nothing: the placeholder version produces zero findings.
 ]
 
 regexes = [
@@ -31,3 +34,27 @@ regexes = [
   # secret pasted into a document is still caught.
   '''<[a-z0-9-]+(key|secret|token|password|id)>''',
 ]
+
+# The default ruleset scores a bare connection URL as low-entropy and lets it
+# through, so a managed-Postgres password — the highest-value secret this repo
+# handles — is exactly what it would miss.
+[[rules]]
+id = "database-url-inline-password"
+description = "Database connection string with an embedded password"
+regex = '''(?i)\b(?:postgres(?:ql)?|mysql|mariadb|mongodb)(?:\+[a-z0-9_]+)?://[^\s:/@]+:[^\s@]+@[^\s/"']+'''
+keywords = ["postgres", "postgresql", "mysql", "mariadb", "mongodb"]
+
+  [rules.allowlist]
+  description = "Local endpoints, shell interpolation, and documented placeholders"
+  regexes = [
+    # A credential for a host that only exists on this machine is not a leak.
+    # The trailing delimiter is optional because the match above stops at the
+    # host — requiring "/" here would let every localhost URL through as a
+    # finding instead of allowlisting it.
+    '''://[^\s@]+@(localhost|127\.0\.0\.1|host\.docker\.internal|postgres|db)(:\d+)?([/\s]|$)''',
+    # Shell and compose interpolation: the value is substituted at run time, so
+    # the literal in the file is a variable name, not a credential.
+    ''':\$\{?[A-Za-z_][A-Za-z0-9_]*\}?@''',
+    # Placeholder passwords used in .env.example and docs/09-deployment.md.
+    ''':(pass|PASS|password|PASSWORD|changeme|CHANGEME|xxx|XXX|frugal)@''',
+  ]

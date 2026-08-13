@@ -34,6 +34,19 @@ next-env.d.ts
 *.pkl
 models/
 
+# --- terraform -------------------------------------------------------------
+# State records every provisioned resource, including any attribute the AWS API
+# returns — private IPs, ARNs, generated key material. It is not encrypted, so a
+# committed state file publishes the live topology of the account.
+.terraform/
+*.tfstate
+*.tfstate.*
+*.tfvars
+!*.tfvars.example
+crash.log
+# .terraform.lock.hcl is deliberately NOT ignored: pinning provider hashes is
+# what makes an apply reproducible across machines.
+
 # --- local data ------------------------------------------------------------
 *.db
 *.sqlite3
