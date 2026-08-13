@@ -32,7 +32,10 @@ x-backend-env: &backend-env
 
 services:
   postgres:
-    image: postgres:16-alpine
+    # Matches Neon, which runs 18. Local was on 16 while production moved on,
+    # which is the configuration where CITEXT and NUMERIC edge cases pass every
+    # test on a developer's machine and surface only after deploy.
+    image: postgres:18-alpine
     environment:
       POSTGRES_USER: frugal
       POSTGRES_PASSWORD: frugal

@@ -24,7 +24,9 @@ jobs:
     # engine. These are the same services docker-compose provides locally.
     services:
       postgres:
-        image: postgres:16-alpine
+        # Keep in step with docker-compose.yml and Neon (18). A CI major that
+        # trails production turns the gate green on an engine nobody runs.
+        image: postgres:18-alpine
         env:
           POSTGRES_USER: frugal
           POSTGRES_PASSWORD: frugal
