@@ -42,7 +42,12 @@ services:
       POSTGRES_DB: frugal
     ports: ["5432:5432"]
     volumes:
-      - postgres_data:/var/lib/postgresql/data
+      # Mounted one level above PGDATA on purpose. From 18 the image stores data
+      # in a major-versioned subdirectory (/var/lib/postgresql/18/docker), and
+      # refuses to start if it finds a volume on the old /data path. Mounting the
+      # parent keeps successive majors inside one volume, which is also what
+      # pg_upgrade --link needs to avoid crossing a mount boundary.
+      - postgres_data:/var/lib/postgresql
       - ./infra/docker/init-test-db.sql:/docker-entrypoint-initdb.d/10-test-db.sql:ro
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U frugal -d frugal"]
